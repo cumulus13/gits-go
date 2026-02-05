@@ -43,12 +43,14 @@ var Icons = struct {
 	INFO    string
 	GIT     string
 	SUCCESS string
+	WARNING string
 }{
 	FOLDER:  "📁",
 	ERROR:   "❌",
 	INFO:    "ℹ️",
 	GIT:     "🌿",
 	SUCCESS: "✅",
+	WARNING: "⚠️",
 }
 
 // FileStyles maps git status to ANSI color codes
@@ -276,7 +278,150 @@ func (s *Status) ColorizeGitStatus(cwd, remoteName string) bool {
 	return true
 }
 
+// func (s *Status) ColorizeGitStatus(cwd, remoteName string) bool {
+// 	isGitignoreBackup := false
+	
+// 	if remoteName != "" {
+// 		workingDir := ""
+// 		if info, err := os.Stat(cwd); err == nil && info.IsDir() {
+// 			workingDir = filepath.Base(cwd)
+// 		}
+// 		_ = workingDir
+// 	}
+	
+// 	if cwd != "" {
+// 		if abs, err := filepath.Abs(cwd); err == nil {
+// 			cwd = abs
+// 		}
+// 	}
+	
+// 	fmt.Printf("%s %schdir:%s %s%s%s\n", 
+// 		Icons.FOLDER, Bold+Blue, Reset, Bold+Pink, cwd, Reset)
+	
+// 	// First, check if this is a git repository
+// 	if _, err := os.Stat(filepath.Join(cwd, ".git")); os.IsNotExist(err) {
+// 		fmt.Printf("%s %sNot a git repository%s\n", 
+// 			Icons.WARNING, Bold+Yellow, Reset)
+// 		return false
+// 	}
+	
+// 	cmd := exec.Command("git", "-c", "color.status=never", "status")
+// 	if cwd != "" {
+// 		cmd.Dir = cwd
+// 	}
+	
+// 	output, err := cmd.CombinedOutput()
+// 	if err != nil {
+// 		// Provide more specific error messages
+// 		errStr := err.Error()
+// 		if strings.Contains(errStr, "exit status 128") {
+// 			if strings.Contains(string(output), "not a git repository") {
+// 				fmt.Printf("%s %sNot a git repository%s\n", 
+// 					Icons.ERROR, Bold+RedPink, Reset)
+// 			} else if strings.Contains(string(output), "fatal:") {
+// 				fmt.Printf("%s %sGit error: %s%s\n", 
+// 					Icons.ERROR, Bold+RedPink, strings.TrimSpace(string(output)), Reset)
+// 			} else {
+// 				fmt.Printf("%s %sGit command failed: %s%s\n", 
+// 					Icons.ERROR, Bold+RedPink, errStr, Reset)
+// 			}
+// 		} else {
+// 			fmt.Printf("%s %s%s%s\n", Icons.ERROR, Bold+RedPink, errStr, Reset)
+// 		}
+// 		return false
+// 	}
+	
+// 	lines := strings.Split(string(output), "\n")
+// 	context := ""
+	
+// 	for _, line := range lines {
+// 		line = strings.TrimRight(line, "\r") // Handle Windows line endings
+		
+// 		// Skip empty lines
+// 		if line == "" {
+// 			continue
+// 		}
+		
+// 		// Branch line
+// 		if matched, _ := regexp.MatchString(`^On branch (.+)$`, line); matched {
+// 			re := regexp.MustCompile(`^On branch (.+)$`)
+// 			matches := re.FindStringSubmatch(line)
+// 			if len(matches) > 1 {
+// 				fmt.Printf("%s On branch %s%s %s%s\n", 
+// 					Icons.INFO, Bold+Cyan, Icons.GIT, matches[1], Reset)
+// 				context = ""
+// 				continue
+// 			}
+// 		}
+		
+// 		// Up to date
+// 		if strings.Contains(line, "Your branch is up to date") {
+// 			fmt.Printf("%s %s%s%s\n", Icons.SUCCESS, Yellow, line, Reset)
+// 			context = ""
+// 			continue
+// 		}
+		
+// 		// Ahead/behind
+// 		if strings.Contains(line, "ahead") || strings.Contains(line, "behind") || strings.Contains(line, "diverged") {
+// 			fmt.Printf("%s%s%s\n", Yellow, line, Reset)
+// 			context = ""
+// 			continue
+// 		}
+		
+// 		// Header detection
+// 		if headerText, key := s.colorHeader(line); headerText != nil {
+// 			fmt.Println(headerText.String())
+// 			context = key
+// 			continue
+// 		}
+		
+// 		// Hints
+// 		if matched, _ := regexp.MatchString(`^\s*\(use "git .*"\)`, line); matched {
+// 			fmt.Printf("%s%s%s\n", Dim, line, Reset)
+// 			continue
+// 		}
+		
+// 		// Nothing to commit
+// 		lower := strings.ToLower(strings.TrimSpace(line))
+// 		if strings.HasPrefix(lower, "nothing to commit") || strings.Contains(lower, "clean working tree") {
+// 			fmt.Printf("%s %s%s%s\n", Icons.SUCCESS, Yellow, line, Reset)
+// 			context = ""
+// 			continue
+// 		}
+		
+// 		// File lines
+// 		fileText := s.colorFileLine(line, context)
+// 		fmt.Println(fileText.String())
+// 	}
+	
+// 	if isGitignoreBackup && remoteName != "" {
+// 		// Placeholder for restore functionality
+// 		// RestoreGitignore(remoteName, workingDir)
+// 	}
+	
+// 	return true
+// }
+
+// func main() {
+// 	status := &Status{}
+// 	status.ColorizeGitStatus(".", "")
+// }
+
 func main() {
-	status := &Status{}
-	status.ColorizeGitStatus(".", "")
+    // Default to current directory if no args
+    targetDir := "."
+    
+    // If first argument is provided, use it as directory
+    if len(os.Args) > 1 {
+        targetDir = os.Args[1]
+    }
+    
+    // Optional remote name as second argument
+    remoteName := ""
+    if len(os.Args) > 2 {
+        remoteName = os.Args[2]
+    }
+    
+    status := &Status{}
+    status.ColorizeGitStatus(targetDir, remoteName)
 }
