@@ -1,0 +1,33 @@
+# ~/.gits.toml  — gits color & behaviour config
+# All color values accept CSS hex format: #RRGGBB or #RGB
+
+# Set to false to disable tree view for untracked files
+tree_mode = true
+
+[colors]
+# File status colors
+modified     = "#FF00FF"   # bold magenta
+deleted      = "#FF4444"   # bright red
+new_file     = "#00FF88"   # mint green
+renamed      = "#00FFFF"   # cyan
+added        = "#00FF88"   # mint green
+
+# Context colors (which "section" a file is in)
+untracked    = "#AA55FF"   # purple
+staged       = "#00FF88"   # green
+not_staged   = "#00FFFF"   # bright cyan
+
+# UI elements
+header       = "#FFFF00"   # yellow for section headers and status labels
+branch       = "#00FFFF"   # branch name
+up_to_date   = "#FFFF00"   # "Your branch is up to date"
+ahead_behind = "#FFFF00"   # ahead/behind/diverged lines
+hint         = ""          # empty = dim (default terminal dim)
+cwd_label    = "#0055FF"   # "chdir:" label
+cwd_path     = "#FFAAFF"   # the path itself
+arrow        = "#FFFFFF"   # the "->" arrow in renames
+
+# Remote info (-r flag) colors
+remote_url   = "#00FFFF"
+remote_pr    = "#00FF88"
+remote_issue = "#FFAA00"
