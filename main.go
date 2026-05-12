@@ -478,23 +478,31 @@ func (s *Status) ColorizeGitStatus(cwd, remoteName string) bool {
 			continue
 		}
 
-		// Hints: lines starting with (use "git ..." — note the regex only checks
-		// the prefix because some variants end with text rather than with '")'
+		// Hints: any line starting with (use "git ..."
+		// The prefix check is intentionally loose — some variants end with
+		// plain text (e.g. "...to include in what will be committed)") rather
+		// than with '")' so we cannot anchor to the end.
 		if matched, _ := regexp.MatchString(`^\s*\(use "git `, line); matched {
-			// In tree mode, suppress the hint inside the untracked section
-			// (it was already printed implicitly via the header block).
-			// Outside tree mode, or for other sections, print it dimmed.
-			if !inUntracked || !s.cfg.TreeMode {
-				fmt.Printf("%s%s%s\n", Dim, line, Reset)
+			if inUntracked && s.cfg.TreeMode {
+				// Inside the untracked tree block: suppress — the tree speaks for itself.
+				continue
 			}
+			// All other contexts: print dimmed with consistent 4-space indent.
+			trimmed := strings.TrimSpace(line)
+			fmt.Printf("    %s%s%s\n", Dim, trimmed, Reset)
 			continue
 		}
 
-		// Nothing to commit / nothing added to commit
+		// Terminal status lines — any of the three "nothing to do" variants:
+		//   "nothing to commit, working tree clean"
+		//   "nothing added to commit but untracked files present ..."
+		//   "no changes added to commit (use "git add" and/or "git commit -a")"
 		lower := strings.ToLower(strings.TrimSpace(line))
-		if strings.HasPrefix(lower, "nothing to commit") ||
+		isTerminalStatus := strings.HasPrefix(lower, "nothing to commit") ||
 			strings.HasPrefix(lower, "nothing added to commit") ||
-			strings.Contains(lower, "clean working tree") {
+			strings.HasPrefix(lower, "no changes added to commit") ||
+			strings.Contains(lower, "clean working tree")
+		if isTerminalStatus {
 			if inUntracked && s.cfg.TreeMode {
 				s.flushUntrackedTree(untrackedFiles, cwd)
 				untrackedFiles = nil
@@ -527,56 +535,59 @@ func (s *Status) ColorizeGitStatus(cwd, remoteName string) bool {
 	return true
 }
 
-// expandDir recursively walks a real directory and populates the tree node
-// with its contents.  Depth is capped to avoid enormous output.
-func expandDir(node *treeNode, absPath string, depth int) {
-	const maxDepth = 8
-	if depth > maxDepth {
-		return
-	}
-	entries, err := os.ReadDir(absPath)
+// gitUntrackedUnder runs `git ls-files --others --exclude-standard` inside
+// subDir (relative to repoRoot) and returns paths relative to repoRoot.
+// This respects .gitignore exactly the same way `git status` does.
+func gitUntrackedUnder(repoRoot, subDir string) []string {
+	cmd := exec.Command(
+		"git", "ls-files",
+		"--others",
+		"--exclude-standard",
+		"--",
+		subDir,
+	)
+	cmd.Dir = repoRoot
+	out, err := cmd.Output()
 	if err != nil {
-		return
+		return nil
 	}
-	for _, e := range entries {
-		child, ok := node.children[e.Name()]
-		if !ok {
-			child = newTreeNode(e.Name(), e.IsDir())
-			node.children[e.Name()] = child
-		}
-		if e.IsDir() {
-			child.isDir = true
-			expandDir(child, filepath.Join(absPath, e.Name()), depth+1)
+	var result []string
+	for _, line := range strings.Split(string(out), "\n") {
+		line = strings.TrimRight(line, "\r")
+		if line != "" {
+			result = append(result, filepath.ToSlash(line))
 		}
 	}
+	return result
 }
 
 // flushUntrackedTree renders collected untracked paths as an ASCII tree.
-// Directories reported by git (e.g. "src/") are expanded from the filesystem
-// so their full contents appear in the tree.
+// Directories reported by git (e.g. "src/") are expanded via
+// `git ls-files --others --exclude-standard` so .gitignore is respected.
 func (s *Status) flushUntrackedTree(paths []string, cwd string) {
 	color := resolveColor(s.cfg.Colors.Untracked)
 	root := newTreeNode(".", true)
 
 	for _, p := range paths {
-		insertPath(root, p)
+		clean := filepath.ToSlash(strings.TrimSpace(p))
+		isDir := strings.HasSuffix(clean, "/")
+		clean = strings.TrimSuffix(clean, "/")
 
-		// Expand directories from disk so their contents show in the tree
-		clean := strings.TrimSuffix(filepath.ToSlash(strings.TrimSpace(p)), "/")
-		absPath := filepath.Join(cwd, filepath.FromSlash(clean))
-		if info, err := os.Stat(absPath); err == nil && info.IsDir() {
-			// Navigate to the node we just inserted
-			parts := strings.Split(clean, "/")
-			cur := root
-			for _, part := range parts {
-				if part == "" {
-					continue
-				}
-				if child, ok2 := cur.children[part]; ok2 {
-					cur = child
+		if isDir {
+			// Ask git for the real untracked contents under this directory,
+			// honouring .gitignore — never walk the filesystem directly.
+			subPaths := gitUntrackedUnder(cwd, clean)
+			if len(subPaths) == 0 {
+				// git gave us the dir name but returned nothing — insert the
+				// dir node alone so it still appears in the tree.
+				insertPath(root, clean+"/")
+			} else {
+				for _, sp := range subPaths {
+					insertPath(root, sp)
 				}
 			}
-			expandDir(cur, absPath, 1)
+		} else {
+			insertPath(root, clean)
 		}
 	}
 
