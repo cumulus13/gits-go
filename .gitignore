@@ -23,3 +23,6 @@ __pycache__/
 # Added entries (2 items)
 *.exe
 *.bat
+
+# Added entries (1 items)
+.gits.toml

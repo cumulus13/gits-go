@@ -20,6 +20,7 @@ import (
 	"strings"
 
 	"github.com/pelletier/go-toml/v2"
+	"github.com/cumulus13/go-config-get/configget"
 )
 
 // ---------------------------------------------------------------------------
@@ -85,6 +86,8 @@ type ColorConfig struct {
 	RemotePR  string `toml:"remote_pr"`
 	RemoteIssue string `toml:"remote_issue"`
 	Arrow     string `toml:"arrow"`
+	TreeDir   string `toml:"tree_dir"`
+	TreeFile  string `toml:"tree_file"`
 }
 
 type AppConfig struct {
@@ -116,32 +119,155 @@ func DefaultConfig() AppConfig {
 			RemotePR:    "#00FF88",
 			RemoteIssue: "#FFAA00",
 			Arrow:       "#FFFFFF",
+			TreeDir:	 "#0055FF",
+			TreeFile:    "#00FFFF",
 		},
 	}
 }
 
-// LoadConfig reads ~/.gits.toml (or the XDG path) and merges with defaults.
-func LoadConfig() AppConfig {
-	cfg := DefaultConfig()
+// getFileEmoji returns an emoji based on file extension
+func getFileEmoji(filename string) string {
+	ext := strings.ToLower(filepath.Ext(filename))
+	switch ext {
+	case ".go":
+		return "🔵"
+	case ".py":
+		return "🐍"
+	case ".js", ".jsx", ".ts", ".tsx":
+		return "💛"
+	case ".rs":
+		return "🦀"
+	case ".rb":
+		return "💎"
+	case ".java", ".kt":
+		return "☕"
+	case ".c", ".cpp", ".h", ".hpp":
+		return "⚙️"
+	case ".md", ".txt", ".rst":
+		return "📝"
+	case ".json":
+		return "📋"
+	case ".yaml", ".yml":
+		return "⚡"
+	case ".toml":
+		return "🔧"
+	case ".xml":
+		return "📰"
+	case ".html", ".htm":
+		return "🌐"
+	case ".css", ".scss", ".sass", ".less":
+		return "🎨"
+	case ".svg":
+		return "🖼️"
+	case ".png", ".jpg", ".jpeg", ".gif", ".ico", ".bmp", ".webp":
+		return "🖼️"
+	case ".mp3", ".wav", ".ogg", ".flac":
+		return "🎵"
+	case ".mp4", ".avi", ".mkv", ".mov":
+		return "🎬"
+	case ".zip", ".tar", ".gz", ".bz2", ".7z", ".rar":
+		return "📦"
+	case ".sh", ".bash", ".zsh":
+		return "💻"
+	case ".lock":
+		return "🔒"
+	case ".gitignore", ".dockerignore":
+		return "🙈"
+	case "dockerfile", ".dockerfile":
+		return "🐳"
+	case "makefile", ".makefile":
+		return "🔨"
+	case "license", ".license":
+		return "📜"
+	default:
+		// Default emoji for directories vs files
+		if filename == "" || strings.HasSuffix(filename, "/") {
+			return "📁"
+		}
+		return "📄"
+	}
+}
 
-	home, err := os.UserHomeDir()
+// getDirEmoji returns folder emoji (can be extended later)
+func getDirEmoji() string {
+	return "📁"
+}
+
+func Exists(path string) bool {
+	_, err := os.Stat(path)
+	return err == nil
+}
+
+func IsFile(path string) bool {
+	info, err := os.Stat(path)
 	if err != nil {
-		return cfg
+		return false
 	}
-	paths := []string{
-		filepath.Join(home, ".gits.toml"),
-		filepath.Join(home, ".config", "gits", "config.toml"),
+
+	return !info.IsDir()
+}
+
+func IsDir(path string) bool {
+	info, err := os.Stat(path)
+	if err != nil {
+		return false
 	}
-	for _, p := range paths {
-		data, err := os.ReadFile(p)
-		if err != nil {
-			continue
-		}
-		if err := toml.Unmarshal(data, &cfg); err == nil {
-			break
-		}
-	}
-	return cfg
+
+	return info.IsDir()
+}
+
+// LoadConfig reads ~/.gits.toml (or the XDG path) and merges with defaults.
+// func LoadConfig() AppConfig {
+// 	cfg := DefaultConfig()
+
+// 	home, err := os.UserHomeDir()
+// 	if err != nil {
+// 		return cfg
+// 	}
+
+// 	paths := []string{
+// 		filepath.Join(home, ".gits.toml"),
+// 		filepath.Join(home, ".config", "gits", "config.toml"),
+// 	}
+// 	for _, p := range paths {
+// 		data, err := os.ReadFile(p)
+// 		if err != nil {
+// 			continue
+// 		}
+// 		if err := toml.Unmarshal(data, &cfg); err == nil {
+// 			break
+// 		}
+// 	}
+// 	return cfg
+// }
+
+func LoadConfig() AppConfig {
+    cfg := DefaultConfig()
+
+    path, err := configget.GetConfigFile(".gits.toml", "gits", configget.Options{Create: true})
+    if err != nil {
+        return cfg
+    }
+
+    fmt.Printf("Load Config File: %s\n", path)
+
+    if !IsFile(path) {
+        return cfg
+    }
+
+    // Read TOML files directly with BurntSushi/toml
+    data, err := os.ReadFile(path)
+    if err != nil {
+        fmt.Printf("Error reading config: %v\n", err)
+        return cfg
+    }
+
+    if err := toml.Unmarshal(data, &cfg); err != nil {
+        fmt.Printf("Error parsing config: %v\n", err)
+        return cfg
+    }
+
+    return cfg
 }
 
 // resolveColor returns a Bold + hex-based ANSI code.  If the value is empty
@@ -251,18 +377,74 @@ func insertPath(root *treeNode, path string) {
 }
 
 // renderTree prints the tree recursively.
-func renderTree(node *treeNode, prefix string, isLast bool, color string, depth int) {
+// func renderTree(node *treeNode, prefix string, isLast bool, color string, depth int) {
+// 	if depth > 0 {
+// 		connector := "├── "
+// 		if isLast {
+// 			connector = "└── "
+// 		}
+// 		label := node.name
+// 		if node.isDir {
+// 			label += "/"
+// 		}
+// 		ct := NewColoredText()
+// 		ct.Append(prefix+connector, Dim)
+// 		ct.Append(label, Bold+color)
+// 		fmt.Println(ct.String())
+// 	}
+
+// 	// Sort children: directories first, then files
+// 	keys := make([]string, 0, len(node.children))
+// 	for k := range node.children {
+// 		keys = append(keys, k)
+// 	}
+// 	sort.Slice(keys, func(i, j int) bool {
+// 		a, b := node.children[keys[i]], node.children[keys[j]]
+// 		if a.isDir != b.isDir {
+// 			return a.isDir
+// 		}
+// 		return keys[i] < keys[j]
+// 	})
+
+// 	childPrefix := prefix
+// 	if depth > 0 {
+// 		if isLast {
+// 			childPrefix += "    "
+// 		} else {
+// 			childPrefix += "│   "
+// 		}
+// 	}
+
+// 	for i, k := range keys {
+// 		renderTree(node.children[k], childPrefix, i == len(keys)-1, color, depth+1)
+// 	}
+// }
+
+// renderTree prints the tree recursively with separate colors for files/dirs and emojis
+func renderTree(node *treeNode, prefix string, isLast bool, dirColor, fileColor string, depth int) {
 	if depth > 0 {
 		connector := "├── "
 		if isLast {
 			connector = "└── "
 		}
+		
 		label := node.name
+		emoji := ""
+		color := fileColor
+		
 		if node.isDir {
-			label += "/"
+			emoji = getDirEmoji() + " "
+			color = dirColor
+			if !strings.HasSuffix(label, "/") {
+				label += "/"
+			}
+		} else {
+			emoji = getFileEmoji(node.name) + " "
 		}
+		
 		ct := NewColoredText()
 		ct.Append(prefix+connector, Dim)
+		ct.Append(emoji, "") // emoji without color styling
 		ct.Append(label, Bold+color)
 		fmt.Println(ct.String())
 	}
@@ -290,7 +472,7 @@ func renderTree(node *treeNode, prefix string, isLast bool, color string, depth 
 	}
 
 	for i, k := range keys {
-		renderTree(node.children[k], childPrefix, i == len(keys)-1, color, depth+1)
+		renderTree(node.children[k], childPrefix, i == len(keys)-1, dirColor, fileColor, depth+1)
 	}
 }
 
@@ -564,8 +746,45 @@ func gitUntrackedUnder(repoRoot, subDir string) []string {
 // flushUntrackedTree renders collected untracked paths as an ASCII tree.
 // Directories reported by git (e.g. "src/") are expanded via
 // `git ls-files --others --exclude-standard` so .gitignore is respected.
+// func (s *Status) flushUntrackedTree(paths []string, cwd string) {
+// 	color := resolveColor(s.cfg.Colors.Untracked)
+// 	root := newTreeNode(".", true)
+
+// 	for _, p := range paths {
+// 		clean := filepath.ToSlash(strings.TrimSpace(p))
+// 		isDir := strings.HasSuffix(clean, "/")
+// 		clean = strings.TrimSuffix(clean, "/")
+
+// 		if isDir {
+// 			// Ask git for the real untracked contents under this directory,
+// 			// honouring .gitignore — never walk the filesystem directly.
+// 			subPaths := gitUntrackedUnder(cwd, clean)
+// 			if len(subPaths) == 0 {
+// 				// git gave us the dir name but returned nothing — insert the
+// 				// dir node alone so it still appears in the tree.
+// 				insertPath(root, clean+"/")
+// 			} else {
+// 				for _, sp := range subPaths {
+// 					insertPath(root, sp)
+// 				}
+// 			}
+// 		} else {
+// 			insertPath(root, clean)
+// 		}
+// 	}
+
+// 	// Label + render
+// 	ct := NewColoredText()
+// 	ct.Append("        . (untracked root)", Dim)
+// 	fmt.Println(ct.String())
+// 	renderTree(root, "        ", true, color, 0)
+// }
+
+// flushUntrackedTree renders collected untracked paths as an ASCII tree.
 func (s *Status) flushUntrackedTree(paths []string, cwd string) {
-	color := resolveColor(s.cfg.Colors.Untracked)
+	dirColor := resolveColor(s.cfg.Colors.TreeDir)
+	fileColor := resolveColor(s.cfg.Colors.TreeFile)
+	
 	root := newTreeNode(".", true)
 
 	for _, p := range paths {
@@ -595,7 +814,7 @@ func (s *Status) flushUntrackedTree(paths []string, cwd string) {
 	ct := NewColoredText()
 	ct.Append("        . (untracked root)", Dim)
 	fmt.Println(ct.String())
-	renderTree(root, "        ", true, color, 0)
+	renderTree(root, "        ", true, dirColor, fileColor, 0)
 }
 
 // ---------------------------------------------------------------------------

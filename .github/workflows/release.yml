@@ -1,0 +1,70 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Get version
+        id: ver
+        run: echo "VERSION=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.22'
+          cache: true
+
+      - name: Build binaries
+        run: |
+          mkdir -p dist
+
+          VERSION=${{ steps.ver.outputs.VERSION }}
+
+          GOOS=windows GOARCH=amd64 go build -o dist/gits_${VERSION}_windows_amd64.exe
+          GOOS=linux   GOARCH=amd64 go build -o dist/gits_${VERSION}_linux_amd64
+          GOOS=darwin  GOARCH=amd64 go build -o dist/gits_${VERSION}_darwin_amd64
+          GOOS=darwin  GOARCH=arm64 go build -o dist/gits_${VERSION}_darwin_arm64
+
+      - name: Generate checksums
+        run: |
+          cd dist
+          sha256sum * > checksums.txt
+
+      - name: Update Scoop manifest
+        run: |
+          VERSION=${{ steps.ver.outputs.VERSION }}
+
+          sed -i "s/\"version\": \".*\"/\"version\": \"$VERSION\"/" scoop/gits.json
+
+          # update hash (windows binary)
+          HASH=$(sha256sum dist/gits_${VERSION}_windows_amd64.exe | awk '{print $1}')
+          sed -i "s/\"hash\": \".*\"/\"hash\": \"$HASH\"/" scoop/gits.json
+
+      - name: Commit Scoop update
+        run: |
+          git config user.name "github-actions"
+          git config user.email "actions@github.com"
+          git add scoop/gits.json
+          git commit -m "update scoop manifest ${{ steps.ver.outputs.VERSION }}" || echo "no changes"
+          git push origin HEAD:master
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: v${{ steps.ver.outputs.VERSION }}
+          tag_name: ${{ github.ref }}
+          generate_release_notes: true
+          files: |
+            dist/*
