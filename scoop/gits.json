@@ -1,5 +1,5 @@
 {
-  "version": "1.0.7",
+  "version": "1.0.0.20260513_082228_101761",
   "description": "A colorized `git status` wrapper with tree view for untracked files, hex color configuration, and GitHub remote info (`-r` flag).",
   "homepage": "https://github.com/cumulus13/gits-go",
   "license": "MIT",
