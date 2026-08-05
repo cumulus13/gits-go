@@ -5,18 +5,147 @@ on:
     tags:
       - 'v*.*.*'
 
+permissions:
+  contents: write
+
 jobs:
-  release:
+  # ────────────────────────────────────────────────────────────────────────────
+  # Build binaries in parallel using a strategy matrix
+  # ────────────────────────────────────────────────────────────────────────────
+  build:
+    name: Build (${{ matrix.suffix }})
     runs-on: ubuntu-latest
 
-    permissions:
-      contents: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # ── Linux x86 / x64 ───────────────────────────────────────────────
+          - goos: linux
+            goarch: amd64
+            goarm: ""
+            ext: ""
+            suffix: linux_amd64
+
+          - goos: linux
+            goarch: "386"
+            goarm: ""
+            ext: ""
+            suffix: linux_386
+
+          # ── Linux ARM / Raspberry Pi ──────────────────────────────────────
+          - goos: linux
+            goarch: arm
+            goarm: "6"
+            ext: ""
+            suffix: linux_armv6
+
+          - goos: linux
+            goarch: arm
+            goarm: "7"
+            ext: ""
+            suffix: linux_armv7
+
+          - goos: linux
+            goarch: arm64
+            goarm: ""
+            ext: ""
+            suffix: linux_arm64
+
+          # ── Android CLI (runs on Termux / Kali NetHunter) ──────────────────
+          - goos: linux
+            goarch: arm
+            goarm: "7"
+            ext: ""
+            suffix: android_armv7
+
+          - goos: linux
+            goarch: arm64
+            goarm: ""
+            ext: ""
+            suffix: android_arm64
+
+          # ── Linux MIPS (Routers / OpenWRT) ────────────────────────────────
+          - goos: linux
+            goarch: mips
+            goarm: ""
+            ext: ""
+            suffix: linux_mips
+
+          - goos: linux
+            goarch: mipsle
+            goarm: ""
+            ext: ""
+            suffix: linux_mipsle
+
+          - goos: linux
+            goarch: mips64
+            goarm: ""
+            ext: ""
+            suffix: linux_mips64
+
+          - goos: linux
+            goarch: mips64le
+            goarm: ""
+            ext: ""
+            suffix: linux_mips64le
+
+          # ── Linux Other Architectures ─────────────────────────────────────
+          - goos: linux
+            goarch: ppc64le
+            goarm: ""
+            ext: ""
+            suffix: linux_ppc64le
+
+          - goos: linux
+            goarch: riscv64
+            goarm: ""
+            ext: ""
+            suffix: linux_riscv64
+
+          - goos: linux
+            goarch: s390x
+            goarm: ""
+            ext: ""
+            suffix: linux_s390x
+
+          # ── macOS / Darwin ────────────────────────────────────────────────
+          - goos: darwin
+            goarch: amd64
+            goarm: ""
+            ext: ""
+            suffix: darwin_amd64
+
+          - goos: darwin
+            goarch: arm64
+            goarm: ""
+            ext: ""
+            suffix: darwin_arm64
+
+          # ── Windows ───────────────────────────────────────────────────────
+          - goos: windows
+            goarch: amd64
+            goarm: ""
+            ext: ".exe"
+            suffix: windows_amd64
+
+          - goos: windows
+            goarch: "386"
+            goarm: ""
+            ext: ".exe"
+            suffix: windows_386
+
+          - goos: windows
+            goarch: arm64
+            goarm: ""
+            ext: ".exe"
+            suffix: windows_arm64
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Get version
+      - name: Extract version
         id: ver
         run: echo "VERSION=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT
 
@@ -26,39 +155,83 @@ jobs:
           go-version: '1.22'
           cache: true
 
-      - name: Build binaries
+      - name: Build binary
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+          GOARM: ${{ matrix.goarm }}
+          CGO_ENABLED: "0"
         run: |
           mkdir -p dist
+          VERSION="${{ steps.ver.outputs.VERSION }}"
+          OUTPUT="dist/gits_${VERSION}_${{ matrix.suffix }}${{ matrix.ext }}"
+          
+          go build -trimpath -ldflags="-s -w" -o "${OUTPUT}" .
 
-          VERSION=${{ steps.ver.outputs.VERSION }}
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: binary-${{ matrix.suffix }}
+          path: dist/*
+          retention-days: 1
 
-          GOOS=windows GOARCH=amd64 go build -o dist/gits_${VERSION}_windows_amd64.exe
-          GOOS=linux   GOARCH=amd64 go build -o dist/gits_${VERSION}_linux_amd64
-          GOOS=darwin  GOARCH=amd64 go build -o dist/gits_${VERSION}_darwin_amd64
-          GOOS=darwin  GOARCH=arm64 go build -o dist/gits_${VERSION}_darwin_arm64
+  # ────────────────────────────────────────────────────────────────────────────
+  # Release job: Collect artifacts, update Scoop manifest, push release
+  # ────────────────────────────────────────────────────────────────────────────
+  release:
+    name: Publish GitHub Release
+    needs: build
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Extract version
+        id: ver
+        run: echo "VERSION=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT
+
+      - name: Download all build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
 
       - name: Generate checksums
         run: |
           cd dist
           sha256sum * > checksums.txt
+          echo "=== Checksums ==="
+          cat checksums.txt
 
       - name: Update Scoop manifest
         run: |
-          VERSION=${{ steps.ver.outputs.VERSION }}
+          VERSION="${{ steps.ver.outputs.VERSION }}"
+          WIN_BINARY="dist/gits_${VERSION}_windows_amd64.exe"
 
-          sed -i "s/\"version\": \".*\"/\"version\": \"$VERSION\"/" scoop/gits.json
+          if [ -f "scoop/gits.json" ]; then
+            sed -i "s/\"version\": \".*\"/\"version\": \"$VERSION\"/" scoop/gits.json
 
-          # update hash (windows binary)
-          HASH=$(sha256sum dist/gits_${VERSION}_windows_amd64.exe | awk '{print $1}')
-          sed -i "s/\"hash\": \".*\"/\"hash\": \"$HASH\"/" scoop/gits.json
+            if [ -f "$WIN_BINARY" ]; then
+              HASH=$(sha256sum "$WIN_BINARY" | awk '{print $1}')
+              sed -i "s/\"hash\": \".*\"/\"hash\": \"$HASH\"/" scoop/gits.json
+            fi
+          fi
 
       - name: Commit Scoop update
         run: |
-          git config user.name "github-actions"
-          git config user.email "actions@github.com"
-          git add scoop/gits.json
-          git commit -m "update scoop manifest ${{ steps.ver.outputs.VERSION }}" || echo "no changes"
-          git push origin HEAD:master
+          if [ -f "scoop/gits.json" ]; then
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git add scoop/gits.json
+            git commit -m "update scoop manifest v${{ steps.ver.outputs.VERSION }}" || echo "No changes to commit"
+            git push origin HEAD:master || echo "Push skipped or failed"
+          fi
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
