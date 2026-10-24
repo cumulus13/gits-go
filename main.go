@@ -19,8 +19,8 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/pelletier/go-toml/v2"
 	"github.com/cumulus13/go-config-get/configget"
+	"github.com/pelletier/go-toml/v2"
 )
 
 // ---------------------------------------------------------------------------
@@ -67,31 +67,32 @@ func hexToAnsi(hex string) string {
 
 // ColorConfig holds the hex (or ANSI) color strings from the config file.
 type ColorConfig struct {
-	Modified  string `toml:"modified"`
-	Deleted   string `toml:"deleted"`
-	NewFile   string `toml:"new_file"`
-	Renamed   string `toml:"renamed"`
-	Added     string `toml:"added"`
-	Untracked string `toml:"untracked"`
-	Staged    string `toml:"staged"`
-	NotStaged string `toml:"not_staged"`
-	Header    string `toml:"header"`
-	Branch    string `toml:"branch"`
-	UpToDate  string `toml:"up_to_date"`
+	Modified    string `toml:"modified"`
+	Deleted     string `toml:"deleted"`
+	NewFile     string `toml:"new_file"`
+	Renamed     string `toml:"renamed"`
+	Added       string `toml:"added"`
+	Untracked   string `toml:"untracked"`
+	Staged      string `toml:"staged"`
+	NotStaged   string `toml:"not_staged"`
+	Header      string `toml:"header"`
+	Branch      string `toml:"branch"`
+	UpToDate    string `toml:"up_to_date"`
 	AheadBehind string `toml:"ahead_behind"`
-	Hint      string `toml:"hint"`
-	CwdLabel  string `toml:"cwd_label"`
-	CwdPath   string `toml:"cwd_path"`
-	RemoteURL string `toml:"remote_url"`
-	RemotePR  string `toml:"remote_pr"`
+	Hint        string `toml:"hint"`
+	CwdLabel    string `toml:"cwd_label"`
+	CwdPath     string `toml:"cwd_path"`
+	RemoteURL   string `toml:"remote_url"`
+	RemotePR    string `toml:"remote_pr"`
 	RemoteIssue string `toml:"remote_issue"`
-	Arrow     string `toml:"arrow"`
-	TreeDir   string `toml:"tree_dir"`
-	TreeFile  string `toml:"tree_file"`
+	Arrow       string `toml:"arrow"`
+	TreeDir     string `toml:"tree_dir"`
+	TreeFile    string `toml:"tree_file"`
 }
 
 type AppConfig struct {
 	TreeMode bool        `toml:"tree_mode"`
+	ShowSize bool        `toml:"show_size"` // Option to calculate and show directory size
 	Colors   ColorConfig `toml:"colors"`
 }
 
@@ -99,6 +100,7 @@ type AppConfig struct {
 func DefaultConfig() AppConfig {
 	return AppConfig{
 		TreeMode: true,
+		ShowSize: false,
 		Colors: ColorConfig{
 			Modified:    "#FF00FF",
 			Deleted:     "#FF4444",
@@ -119,7 +121,7 @@ func DefaultConfig() AppConfig {
 			RemotePR:    "#00FF88",
 			RemoteIssue: "#FFAA00",
 			Arrow:       "#FFFFFF",
-			TreeDir:	 "#0055FF",
+			TreeDir:     "#0055FF",
 			TreeFile:    "#00FFFF",
 		},
 	}
@@ -216,58 +218,32 @@ func IsDir(path string) bool {
 	return info.IsDir()
 }
 
-// LoadConfig reads ~/.gits.toml (or the XDG path) and merges with defaults.
-// func LoadConfig() AppConfig {
-// 	cfg := DefaultConfig()
-
-// 	home, err := os.UserHomeDir()
-// 	if err != nil {
-// 		return cfg
-// 	}
-
-// 	paths := []string{
-// 		filepath.Join(home, ".gits.toml"),
-// 		filepath.Join(home, ".config", "gits", "config.toml"),
-// 	}
-// 	for _, p := range paths {
-// 		data, err := os.ReadFile(p)
-// 		if err != nil {
-// 			continue
-// 		}
-// 		if err := toml.Unmarshal(data, &cfg); err == nil {
-// 			break
-// 		}
-// 	}
-// 	return cfg
-// }
-
 func LoadConfig() AppConfig {
-    cfg := DefaultConfig()
+	cfg := DefaultConfig()
 
-    path, err := configget.GetConfigFile(".gits.toml", "gits", configget.Options{Create: true})
-    if err != nil {
-        return cfg
-    }
+	path, err := configget.GetConfigFile(".gits.toml", "gits", configget.Options{Create: true})
+	if err != nil {
+		return cfg
+	}
 
-    fmt.Printf("Load Config File: %s\n", path)
+	fmt.Printf("Load Config File: %s\n", path)
 
-    if !IsFile(path) {
-        return cfg
-    }
+	if !IsFile(path) {
+		return cfg
+	}
 
-    // Read TOML files directly with BurntSushi/toml
-    data, err := os.ReadFile(path)
-    if err != nil {
-        fmt.Printf("Error reading config: %v\n", err)
-        return cfg
-    }
+	data, err := os.ReadFile(path)
+	if err != nil {
+		fmt.Printf("Error reading config: %v\n", err)
+		return cfg
+	}
 
-    if err := toml.Unmarshal(data, &cfg); err != nil {
-        fmt.Printf("Error parsing config: %v\n", err)
-        return cfg
-    }
+	if err := toml.Unmarshal(data, &cfg); err != nil {
+		fmt.Printf("Error parsing config: %v\n", err)
+		return cfg
+	}
 
-    return cfg
+	return cfg
 }
 
 // resolveColor returns a Bold + hex-based ANSI code.  If the value is empty
@@ -277,6 +253,59 @@ func resolveColor(hex string) string {
 		return ""
 	}
 	return hexToAnsi(hex)
+}
+
+// ---------------------------------------------------------------------------
+// Calculation Helpers
+// ---------------------------------------------------------------------------
+
+// getWorkspaceSize calculates the total size of files tracked by Git AND
+// untracked files strictly respecting .gitignore.
+func getWorkspaceSize(cwd string) (int64, error) {
+	if cwd == "" {
+		cwd = "."
+	}
+
+	// -z: null-terminated output (handles files with spaces securely)
+	// -c: include cached (tracked) files
+	// -o: include others (untracked) files
+	// --exclude-standard: strictly ignore everything in .gitignore
+	cmd := exec.Command("git", "ls-files", "-z", "-c", "-o", "--exclude-standard")
+	cmd.Dir = cwd
+	out, err := cmd.Output()
+	if err != nil {
+		return 0, err
+	}
+
+	var size int64
+	files := strings.Split(string(out), "\x00")
+	for _, file := range files {
+		if file == "" {
+			continue
+		}
+		
+		// git ls-files returns paths relative to cmd.Dir
+		fullPath := filepath.Join(cwd, file)
+		info, err := os.Stat(fullPath)
+		if err == nil && !info.IsDir() {
+			size += info.Size()
+		}
+	}
+	return size, nil
+}
+
+// formatSize formats bytes into a human-readable string
+func formatSize(b int64) string {
+	const unit = 1024
+	if b < unit {
+		return fmt.Sprintf("%d B", b)
+	}
+	div, exp := int64(unit), 0
+	for n := b / unit; n >= unit; n /= unit {
+		div *= unit
+		exp++
+	}
+	return fmt.Sprintf("%.1f %cB", float64(b)/float64(div), "KMGTPE"[exp])
 }
 
 // ---------------------------------------------------------------------------
@@ -376,50 +405,6 @@ func insertPath(root *treeNode, path string) {
 	}
 }
 
-// renderTree prints the tree recursively.
-// func renderTree(node *treeNode, prefix string, isLast bool, color string, depth int) {
-// 	if depth > 0 {
-// 		connector := "├── "
-// 		if isLast {
-// 			connector = "└── "
-// 		}
-// 		label := node.name
-// 		if node.isDir {
-// 			label += "/"
-// 		}
-// 		ct := NewColoredText()
-// 		ct.Append(prefix+connector, Dim)
-// 		ct.Append(label, Bold+color)
-// 		fmt.Println(ct.String())
-// 	}
-
-// 	// Sort children: directories first, then files
-// 	keys := make([]string, 0, len(node.children))
-// 	for k := range node.children {
-// 		keys = append(keys, k)
-// 	}
-// 	sort.Slice(keys, func(i, j int) bool {
-// 		a, b := node.children[keys[i]], node.children[keys[j]]
-// 		if a.isDir != b.isDir {
-// 			return a.isDir
-// 		}
-// 		return keys[i] < keys[j]
-// 	})
-
-// 	childPrefix := prefix
-// 	if depth > 0 {
-// 		if isLast {
-// 			childPrefix += "    "
-// 		} else {
-// 			childPrefix += "│   "
-// 		}
-// 	}
-
-// 	for i, k := range keys {
-// 		renderTree(node.children[k], childPrefix, i == len(keys)-1, color, depth+1)
-// 	}
-// }
-
 // renderTree prints the tree recursively with separate colors for files/dirs and emojis
 func renderTree(node *treeNode, prefix string, isLast bool, dirColor, fileColor string, depth int) {
 	if depth > 0 {
@@ -427,11 +412,11 @@ func renderTree(node *treeNode, prefix string, isLast bool, dirColor, fileColor 
 		if isLast {
 			connector = "└── "
 		}
-		
+
 		label := node.name
 		emoji := ""
 		color := fileColor
-		
+
 		if node.isDir {
 			emoji = getDirEmoji() + " "
 			color = dirColor
@@ -441,7 +426,7 @@ func renderTree(node *treeNode, prefix string, isLast bool, dirColor, fileColor 
 		} else {
 			emoji = getFileEmoji(node.name) + " "
 		}
-		
+
 		ct := NewColoredText()
 		ct.Append(prefix+connector, Dim)
 		ct.Append(emoji, "") // emoji without color styling
@@ -714,6 +699,14 @@ func (s *Status) ColorizeGitStatus(cwd, remoteName string) bool {
 		s.flushUntrackedTree(untrackedFiles, cwd)
 	}
 
+	if s.cfg.ShowSize {
+		size, err := getWorkspaceSize(cwd)
+		if err == nil {
+			fmt.Printf("\n%s Workspace Total Size: %s%s%s\n",
+				Icons.INFO, Bold+resolveColor(c.Header), formatSize(size), Reset)
+		}
+	}
+
 	return true
 }
 
@@ -744,47 +737,10 @@ func gitUntrackedUnder(repoRoot, subDir string) []string {
 }
 
 // flushUntrackedTree renders collected untracked paths as an ASCII tree.
-// Directories reported by git (e.g. "src/") are expanded via
-// `git ls-files --others --exclude-standard` so .gitignore is respected.
-// func (s *Status) flushUntrackedTree(paths []string, cwd string) {
-// 	color := resolveColor(s.cfg.Colors.Untracked)
-// 	root := newTreeNode(".", true)
-
-// 	for _, p := range paths {
-// 		clean := filepath.ToSlash(strings.TrimSpace(p))
-// 		isDir := strings.HasSuffix(clean, "/")
-// 		clean = strings.TrimSuffix(clean, "/")
-
-// 		if isDir {
-// 			// Ask git for the real untracked contents under this directory,
-// 			// honouring .gitignore — never walk the filesystem directly.
-// 			subPaths := gitUntrackedUnder(cwd, clean)
-// 			if len(subPaths) == 0 {
-// 				// git gave us the dir name but returned nothing — insert the
-// 				// dir node alone so it still appears in the tree.
-// 				insertPath(root, clean+"/")
-// 			} else {
-// 				for _, sp := range subPaths {
-// 					insertPath(root, sp)
-// 				}
-// 			}
-// 		} else {
-// 			insertPath(root, clean)
-// 		}
-// 	}
-
-// 	// Label + render
-// 	ct := NewColoredText()
-// 	ct.Append("        . (untracked root)", Dim)
-// 	fmt.Println(ct.String())
-// 	renderTree(root, "        ", true, color, 0)
-// }
-
-// flushUntrackedTree renders collected untracked paths as an ASCII tree.
 func (s *Status) flushUntrackedTree(paths []string, cwd string) {
 	dirColor := resolveColor(s.cfg.Colors.TreeDir)
 	fileColor := resolveColor(s.cfg.Colors.TreeFile)
-	
+
 	root := newTreeNode(".", true)
 
 	for _, p := range paths {
@@ -844,23 +800,13 @@ func isPathLike(s string) bool {
 }
 
 // parseRemote tries to extract owner/repo from various input formats.
-// Supported:
-//   - "." / ".." / any path  → treated as cwd; resolves origin from that dir
-//   - https://github.com/owner/repo[.git]
-//   - git@github.com:owner/repo[.git]
-//   - owner/repo
-//   - reponame / remote-name  (resolved via `git remote get-url`)
 func parseRemote(input, cwd string) (owner, repo string, ok bool) {
 	// --- Path-as-cwd shortcut -------------------------------------------
-	// "gits -r ."  or  "gits -r /some/dir"  means: use that dir as cwd and
-	// resolve the remote from its `origin`.
 	if isPathLike(input) {
 		resolvedCwd := input
 		if abs, err := filepath.Abs(input); err == nil {
 			resolvedCwd = abs
 		}
-		// Recurse with empty input so we fall through to the origin lookup,
-		// but use the path as the working directory.
 		return parseRemote("", resolvedCwd)
 	}
 
@@ -904,21 +850,21 @@ func parseRemote(input, cwd string) (owner, repo string, ok bool) {
 }
 
 type ghPR struct {
-	Number int    `json:"number"`
-	Title  string `json:"title"`
-	State  string `json:"state"`
+	Number  int    `json:"number"`
+	Title   string `json:"title"`
+	State   string `json:"state"`
 	HTMLURL string `json:"html_url"`
-	User   struct {
+	User    struct {
 		Login string `json:"login"`
 	} `json:"user"`
 	Draft bool `json:"draft"`
 }
 
 type ghIssue struct {
-	Number  int    `json:"number"`
-	Title   string `json:"title"`
-	State   string `json:"state"`
-	HTMLURL  string `json:"html_url"`
+	Number      int       `json:"number"`
+	Title       string    `json:"title"`
+	State       string    `json:"state"`
+	HTMLURL     string    `json:"html_url"`
 	PullRequest *struct{} `json:"pull_request,omitempty"`
 }
 
@@ -1059,6 +1005,10 @@ func printUsage() {
 	fmt.Println("  gits [path]                    - show git status (colorized, tree mode)")
 	fmt.Println("  gits -r [remote] [path]        - show GitHub remote info for a repo")
 	fmt.Println("")
+	fmt.Println("Options:")
+	fmt.Println("  --tree / --no-tree             - show or hide tree output for untracked files")
+	fmt.Println("  --size / --no-size             - show or hide workspace total calculation size")
+	fmt.Println("")
 	fmt.Println("  [remote] can be:")
 	fmt.Println("    .                   (current dir — resolves origin automatically)")
 	fmt.Println("    /path/to/repo       (any dir — resolves origin automatically)")
@@ -1079,12 +1029,12 @@ func dumpConfig(cfg AppConfig) {
 
 func main() {
 	cfg := LoadConfig()
-	status := NewStatus(cfg)
-
 	args := os.Args[1:]
 
-	if len(args) > 0 {
-		switch args[0] {
+	// Argument parser loop to support chaining flags
+	for len(args) > 0 {
+		arg := args[0]
+		switch arg {
 		case "-h", "--help":
 			printUsage()
 			return
@@ -1093,28 +1043,23 @@ func main() {
 			return
 		case "--tree":
 			cfg.TreeMode = true
-			status = NewStatus(cfg)
 			args = args[1:]
 		case "--no-tree":
 			cfg.TreeMode = false
-			status = NewStatus(cfg)
+			args = args[1:]
+		case "--size":
+			cfg.ShowSize = true
+			args = args[1:]
+		case "--no-size":
+			cfg.ShowSize = false
 			args = args[1:]
 		case "-r", "--remote":
-			// Accepted forms:
-			//   gits -r                        -> origin of cwd "."
-			//   gits -r .                      -> origin of "." (path-as-cwd)
-			//   gits -r /some/dir              -> origin of that dir
-			//   gits -r owner/repo             -> explicit slug
-			//   gits -r reponame               -> git remote get-url reponame
-			//   gits -r owner/repo /some/dir   -> slug + explicit cwd
 			remoteInput := ""
 			cwd := "."
 			if len(args) >= 2 {
 				arg1 := args[1]
 				if isPathLike(arg1) {
-					// path given as first arg: use it as cwd, resolve origin from there
 					cwd = arg1
-					// remoteInput stays "", parseRemote will fall through to origin
 				} else {
 					remoteInput = arg1
 					if len(args) >= 3 {
@@ -1122,10 +1067,17 @@ func main() {
 					}
 				}
 			}
+			status := NewStatus(cfg)
 			status.ShowRemoteInfo(remoteInput, cwd)
 			return
+		default:
+			// Not a recognized flag, break loop to process as target dir
+			goto PARSE_DONE
 		}
 	}
+PARSE_DONE:
+
+	status := NewStatus(cfg)
 
 	targetDir := "."
 	if len(args) > 0 {
